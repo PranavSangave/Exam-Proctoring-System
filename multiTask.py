@@ -7,6 +7,10 @@ from tkinter import messagebox
 import threading
 import time
 from PIL import Image,ImageTk
+import face_recognition
+import os
+# from simple_facerec import SimpleFacerec
+
 
 from tensorflow.keras import Model
 from tensorflow.keras.layers import (
@@ -32,6 +36,8 @@ color_ad = None
 kill = False
 showWindowVari = 0
 showAlerts = 0
+sfr = None
+studName = None
 
 def openForm():
     global color_ad
@@ -274,6 +280,89 @@ def openForm():
 # ----- end of tkinter objecyt
 
 
+# FACE DETECTION MECHANISM
+class SimpleFacerec:
+    global studName
+    def __init__(self):
+        self.known_face_encodings = []
+        self.known_face_names = ['Pranav']
+
+        # Resize frame for a faster speed
+        self.frame_resizing = 0.25
+
+    def load_encoding_images(self, images_path, image_name):
+        """
+        Load encoding images from path
+        :param images_path:
+        :return:
+        """
+        # Load Images
+        # images_path = "ElonMusk.jpg"
+        print("Image Path : ", images_path)
+        print("Image name : ", image_name)
+
+        print("{} encoding images found.".format(len(images_path)))
+
+        # Store image encoding and names
+        for img_path in images_path:
+            print("hi")
+            img = cv2.imread(fr"F:\Exam Proctoring System\Exam-Proctoring-System\images\{image_name}")
+            rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+            # Get the filename only from the initial file path.
+            basename = os.path.basename(img_path)
+            (filename, ext) = os.path.splitext(basename)
+            # Get encoding
+            img_encoding = face_recognition.face_encodings(rgb_img)[0]
+
+            # Store file name and file encoding
+            self.known_face_encodings.append(img_encoding)
+            self.known_face_names.append(filename)
+        print("Encoding images loaded")
+
+    def detect_known_faces(self, frame):
+        global studName
+        small_frame = cv2.resize(frame, (0, 0), fx=self.frame_resizing, fy=self.frame_resizing)
+        # Find all the faces and face encodings in the current frame of video
+        # Convert the image from BGR color (which OpenCV uses) to RGB color (which face_recognition uses)
+        rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+        face_locations = face_recognition.face_locations(rgb_small_frame)
+        face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
+
+        face_names = []
+        for face_encoding in face_encodings:
+            # See if the face is a match for the known face(s)
+            matches = face_recognition.compare_faces(self.known_face_encodings, face_encoding)
+            name = "Unknown"
+
+            # # If a match was found in known_face_encodings, just use the first one.
+            # if True in matches:
+            #     first_match_index = matches.index(True)
+            #     name = known_face_names[first_match_index]
+
+            # Or instead, use the known face with the smallest distance to the new face
+            face_distances = face_recognition.face_distance(self.known_face_encodings, face_encoding)
+            best_match_index = np.argmin(face_distances)
+            if matches[best_match_index]:
+                name = self.known_face_names[best_match_index]
+
+            if name == None:
+                print("Not Detected !")
+            else:
+                print("Detected !")
+
+            print("name : " + name)
+            studName = name
+            if name == "Unknown":
+                messagebox.showerror("Alert","Unknown Person Detected")
+            face_names.append(name)
+
+
+        # Convert to numpy array to adjust coordinates with frame resizing quickly
+        face_locations = np.array(face_locations)
+        face_locations = face_locations / self.frame_resizing
+        return face_locations.astype(int), face_names
+
 def load_darknet_weights(model, weights_file):
     # Open the weights file
     wf = open(weights_file, 'rb')
@@ -422,7 +511,6 @@ def YoloConv(filters, name=None):
 
     return yolo_conv
 
-
 def YoloOutput(filters, anchors, classes, name=None):
 
     def yolo_output(x_in):
@@ -434,7 +522,6 @@ def YoloOutput(filters, anchors, classes, name=None):
         return tf.keras.Model(inputs, x, name=name)(x_in)
 
     return yolo_output
-
 
 def yolo_boxes(pred, anchors, classes):
     # pred: (batch_size, grid, grid, anchors, (x, y, w, h, obj, ...classes))
@@ -462,7 +549,6 @@ def yolo_boxes(pred, anchors, classes):
     bbox = tf.concat([box_x1y1, box_x2y2], axis=-1)
 
     return bbox, objectness, class_probs, pred_box
-
 
 def yolo_nms(outputs, anchors, masks, classes):
     # boxes, conf, type
@@ -678,7 +764,7 @@ def print_eye_pos(img, left, right):
 
 
 
-    # -------------Runner Area ---------------
+# ------------- Runner Area ---------------
 
 # --------- eyeTracker ---------
 
@@ -1037,6 +1123,63 @@ def eyeDetector():
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
+# New Feature
+def faceDetection():
+    global sfr
+    while True:
+        ret, frame = cap.read()
+
+        # Check if 'c' is pressed to capture an image
+        if cv2.waitKey(1) == ord('c'):
+            print("Captured !")
+            # Capture frame and save as JPEG file
+            cv2.imwrite("images/me.jpg", frame)
+            # Load captured image and encode it
+            # sfr.load_encoding_images("images", "me.jpg")
+            break
+
+        cv2.imshow("Frame", frame)
+
+    # Encode faces from a folder
+    sfr = SimpleFacerec()
+    sfr.load_encoding_images("images", "me.jpg")
+
+def isFaceCorrect():
+    while True:
+        try:
+            ret, frame = cap.read()
+
+            # Detect Faces
+            face_locations, face_names = sfr.detect_known_faces(frame)
+            if len(face_locations) == 1:
+                print("Detected !")
+            else:
+                print("Not Detected !")
+
+            for face_loc, name in zip(face_locations, face_names):
+                y1, x2, y2, x1 = face_loc[0], face_loc[1], face_loc[2], face_loc[3]
+
+                cv2.putText(frame, name, (x1, y1 - 10), cv2.FONT_HERSHEY_DUPLEX, 1, (0, 0, 200), 2)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 200), 4)
+
+            cv2.imshow("Frame", frame)
+
+            key = cv2.waitKey(1)
+
+            if key == 27:
+                break
+
+        except Exception:
+            print("Exception occured in Thread-7")
+            print("Again running a thread-7")
+            # t4.start()
+            continue
+
+        if kill:
+            print("Thread-7 killed due to you.")
+            break
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
 time.sleep(3)
 
@@ -1045,14 +1188,11 @@ t2 = threading.Thread(target=personDetectStarting)
 t3 = threading.Thread(target=mouthDetectStarting)
 t4 = threading.Thread(target=eyeDetector)
 t5 = threading.Thread(target=openForm)
+t6 = threading.Thread(target=faceDetection)
+t7 = threading.Thread(target=isFaceCorrect)
 
 def startThreads():
     print("thread started")
-#     t1.start()
-#     t2.start()
-#     t3.start()
-#     t4.start()
-#     joinThreads()
 
 def joinThreads():
     t1.join()
@@ -1060,15 +1200,20 @@ def joinThreads():
     t3.join()
     t4.join()
     t5.join()
-
+    t7.join()
 
 t5.start()
 time.sleep(20)
 print("Sleep Done..")
+t6.start()
+time.sleep(20)
+print("Sleep Done 2")
+
 t1.start()
 t2.start()
 t3.start()
 t4.start()
+t7.start()
 joinThreads()
 
 print("Main Ends here !")
